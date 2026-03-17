@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -32,11 +33,7 @@ class DoraemonTranslatorApp:
         self.style.theme_use("clam")
 
         self.style.configure("Primary.TFrame", background="#8ED6FF")
-        self.style.configure(
-            "Card.TFrame",
-            background="#FFFFFF",
-            relief="flat",
-        )
+        self.style.configure("Card.TFrame", background="#FFFFFF", relief="flat")
         self.style.configure(
             "Title.TLabel",
             background="#8ED6FF",
@@ -74,16 +71,14 @@ class DoraemonTranslatorApp:
         container = ttk.Frame(self.root, style="Primary.TFrame", padding=18)
         container.pack(fill="both", expand=True)
 
-        ttk.Label(
-            container,
-            style="Title.TLabel",
-            text="🐾 どらえもん翻訳スタジオ",
-        ).pack(anchor="center", pady=(0, 4))
+        ttk.Label(container, style="Title.TLabel", text="🐾 どらえもん翻訳スタジオ").pack(
+            anchor="center", pady=(0, 4)
+        )
 
         ttk.Label(
             container,
             style="Sub.TLabel",
-            text="日本語の動画を英語へ翻訳し、タイムスタンプ付きの字幕を作成します",
+            text="日本語の動画を英語へ翻訳し、字幕入り動画を書き出します",
         ).pack(anchor="center", pady=(0, 16))
 
         config_card = ttk.Frame(container, style="Card.TFrame", padding=14)
@@ -117,11 +112,9 @@ class DoraemonTranslatorApp:
         model_frame = ttk.Frame(config_card, style="Card.TFrame")
         model_frame.grid(row=2, column=0, sticky="w", pady=(4, 0))
 
-        ttk.Label(
-            model_frame,
-            style="CardTitle.TLabel",
-            text="モデルサイズ:",
-        ).grid(row=0, column=0, padx=(0, 8))
+        ttk.Label(model_frame, style="CardTitle.TLabel", text="モデルサイズ:").grid(
+            row=0, column=0, padx=(0, 8)
+        )
 
         model_combo = ttk.Combobox(
             model_frame,
@@ -146,7 +139,7 @@ class DoraemonTranslatorApp:
 
         self.save_btn = ttk.Button(
             action_frame,
-            text="💾 結果を保存",
+            text="🎬 字幕付き動画を書き出し",
             style="Action.TButton",
             command=self._save_results,
             state="disabled",
@@ -154,11 +147,9 @@ class DoraemonTranslatorApp:
         self.save_btn.pack(side="left", padx=10)
 
         self.status_var = tk.StringVar(value="準備完了: 動画ファイルを選択してください。")
-        ttk.Label(
-            container,
-            style="Sub.TLabel",
-            textvariable=self.status_var,
-        ).pack(anchor="w", pady=(0, 6))
+        ttk.Label(container, style="Sub.TLabel", textvariable=self.status_var).pack(
+            anchor="w", pady=(0, 6)
+        )
 
         self.progress = ttk.Progressbar(container, mode="indeterminate")
         self.progress.pack(fill="x", pady=(0, 10))
@@ -219,8 +210,7 @@ class DoraemonTranslatorApp:
         self.status_var.set("翻訳中... 少し待ってください（Doraemon power!）")
         self.output_text.delete("1.0", tk.END)
 
-        worker = threading.Thread(target=self._translate_worker, daemon=True)
-        worker.start()
+        threading.Thread(target=self._translate_worker, daemon=True).start()
 
     def _translate_worker(self) -> None:
         try:
@@ -241,7 +231,7 @@ class DoraemonTranslatorApp:
         self.progress.stop()
         self.translate_btn.configure(state="normal")
         self.save_btn.configure(state="normal")
-        self.status_var.set("翻訳完了！結果を確認して保存できます。")
+        self.status_var.set("翻訳完了！字幕付き動画を書き出せます。")
         self.output_text.insert(tk.END, formatted_text)
 
     def _on_translation_error(self, err: str) -> None:
@@ -255,27 +245,80 @@ class DoraemonTranslatorApp:
             messagebox.showwarning("保存エラー", "保存できる結果がありません。")
             return
 
-        base_path = filedialog.asksaveasfilename(
-            title="結果保存",
-            defaultextension=".txt",
-            filetypes=[("Text", "*.txt")],
-            initialfile="translated_transcript.txt",
+        output_video_path = filedialog.asksaveasfilename(
+            title="字幕付き動画を保存",
+            defaultextension=".mp4",
+            filetypes=[("MP4", "*.mp4")],
+            initialfile="translated_subtitled.mp4",
         )
 
-        if not base_path:
+        if not output_video_path:
             return
+
+        txt_path = os.path.splitext(output_video_path)[0] + ".txt"
+        srt_path = os.path.splitext(output_video_path)[0] + ".srt"
 
         txt_content = self._format_segments(self.segments)
         srt_content = self._to_srt(self.segments)
-        srt_path = os.path.splitext(base_path)[0] + ".srt"
 
-        with open(base_path, "w", encoding="utf-8") as txt_file:
+        with open(txt_path, "w", encoding="utf-8") as txt_file:
             txt_file.write(txt_content)
 
         with open(srt_path, "w", encoding="utf-8") as srt_file:
             srt_file.write(srt_content)
 
-        messagebox.showinfo("保存完了", f"保存しました:\n{base_path}\n{srt_path}")
+        try:
+            self._burn_subtitles_to_video(
+                input_video=self.video_path.get(),
+                srt_path=srt_path,
+                output_video=output_video_path,
+            )
+        except RuntimeError as exc:
+            messagebox.showerror("動画書き出しエラー", str(exc))
+            return
+
+        messagebox.showinfo(
+            "保存完了",
+            f"保存しました:\n{output_video_path}\n{txt_path}\n{srt_path}",
+        )
+
+    def _burn_subtitles_to_video(self, input_video: str, srt_path: str, output_video: str) -> None:
+        filter_path = self._escape_for_ffmpeg_subtitles(os.path.abspath(srt_path))
+        command = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            input_video,
+            "-vf",
+            f"subtitles={filter_path}",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "medium",
+            "-crf",
+            "18",
+            "-c:a",
+            "copy",
+            output_video,
+        ]
+
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            err = result.stderr.strip() or result.stdout.strip()
+            raise RuntimeError(
+                "ffmpegで字幕付き動画の書き出しに失敗しました。"
+                " ffmpeg がインストール済みか確認してください。\n"
+                f"詳細: {err}"
+            )
+
+    @staticmethod
+    def _escape_for_ffmpeg_subtitles(path: str) -> str:
+        escaped = path.replace("\\", "\\\\")
+        escaped = escaped.replace(":", "\\:")
+        escaped = escaped.replace("'", "\\'")
+        escaped = escaped.replace(",", "\\,")
+        escaped = escaped.replace("[", "\\[").replace("]", "\\]")
+        return escaped
 
     @staticmethod
     def _format_ts(seconds: float) -> str:
@@ -318,7 +361,7 @@ class DoraemonTranslatorApp:
 
 def main() -> None:
     root = tk.Tk()
-    app = DoraemonTranslatorApp(root)
+    DoraemonTranslatorApp(root)
     root.mainloop()
 
 
