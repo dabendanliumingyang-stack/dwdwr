@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
+import tempfile
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -283,42 +285,42 @@ class DoraemonTranslatorApp:
         )
 
     def _burn_subtitles_to_video(self, input_video: str, srt_path: str, output_video: str) -> None:
-        filter_path = self._escape_for_ffmpeg_subtitles(os.path.abspath(srt_path))
-        command = [
-            "ffmpeg",
-            "-y",
-            "-i",
-            input_video,
-            "-vf",
-            f"subtitles={filter_path}",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "medium",
-            "-crf",
-            "18",
-            "-c:a",
-            "copy",
-            output_video,
-        ]
+        with tempfile.TemporaryDirectory(prefix="doraemon_subs_") as temp_dir:
+            temp_srt = os.path.join(temp_dir, "captions.srt")
+            shutil.copyfile(srt_path, temp_srt)
 
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
-        if result.returncode != 0:
-            err = result.stderr.strip() or result.stdout.strip()
-            raise RuntimeError(
-                "ffmpegで字幕付き動画の書き出しに失敗しました。"
-                " ffmpeg がインストール済みか確認してください。\n"
-                f"詳細: {err}"
+            command = [
+                "ffmpeg",
+                "-y",
+                "-i",
+                input_video,
+                "-vf",
+                "subtitles=captions.srt",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "medium",
+                "-crf",
+                "18",
+                "-c:a",
+                "copy",
+                output_video,
+            ]
+
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                cwd=temp_dir,
             )
-
-    @staticmethod
-    def _escape_for_ffmpeg_subtitles(path: str) -> str:
-        escaped = path.replace("\\", "\\\\")
-        escaped = escaped.replace(":", "\\:")
-        escaped = escaped.replace("'", "\\'")
-        escaped = escaped.replace(",", "\\,")
-        escaped = escaped.replace("[", "\\[").replace("]", "\\]")
-        return escaped
+            if result.returncode != 0:
+                err = result.stderr.strip() or result.stdout.strip()
+                raise RuntimeError(
+                    "ffmpegで字幕付き動画の書き出しに失敗しました。"
+                    " ffmpeg がインストール済みか確認してください。\n"
+                    f"詳細: {err}"
+                )
 
     @staticmethod
     def _format_ts(seconds: float) -> str:
